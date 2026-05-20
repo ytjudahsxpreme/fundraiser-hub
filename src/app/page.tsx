@@ -1,7 +1,17 @@
 import { FundraiserCard } from "@/components/FundraiserCard";
-import { MOCK_FUNDRAISERS } from "@/lib/data/mockData";
+import { firebaseDataSource } from "@/lib/data/firebaseDataSource";
 
-export default function HomePage() {
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+export default async function HomePage() {
+  const list = await firebaseDataSource.listFundraisers();
+  // Never ship access codes to the browser.
+  const safe = list.map(({ accessCode: _omit, ...rest }) => {
+    void _omit;
+    return rest;
+  });
+
   return (
     <div className="flex-1 flex flex-col">
       <header className="px-5 pt-8 pb-4 sm:pt-12">
@@ -20,15 +30,23 @@ export default function HomePage() {
       </header>
       <main className="flex-1 px-5 pb-12">
         <div className="mx-auto max-w-3xl space-y-3">
-          {MOCK_FUNDRAISERS.map((f) => (
-            <FundraiserCard key={f.id} fundraiser={f} />
-          ))}
+          {safe.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white/50 px-6 py-10 text-center">
+              <p className="text-sm font-semibold text-slate-700">No fundraisers configured yet</p>
+              <p className="mt-1 text-xs text-slate-500">
+                Run <code className="font-mono">npm run seed</code> to load the default fundraisers,
+                or add one in Firestore at <code className="font-mono">/fundraisers</code>.
+              </p>
+            </div>
+          ) : (
+            safe.map((f) => <FundraiserCard key={f.id} fundraiser={f} />)
+          )}
         </div>
       </main>
       <footer className="px-5 py-6 border-t border-slate-200 bg-white">
         <div className="mx-auto max-w-3xl flex items-center justify-between text-xs text-slate-500">
           <span>Internal use only · School Fundraiser System</span>
-          <span className="font-mono">v0.1</span>
+          <span className="font-mono">v0.2</span>
         </div>
       </footer>
     </div>

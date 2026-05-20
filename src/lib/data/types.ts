@@ -73,7 +73,11 @@ export interface Fundraiser {
   id: string;
   name: string;
   classYear: string;
-  accessCode: string;
+  /**
+   * Omitted on responses from public endpoints (e.g. the home-page list).
+   * Present after unlock or in server-side calls.
+   */
+  accessCode?: string;
   color: string;
   emoji: string;
   sheetConfig: SheetConfig;
@@ -119,8 +123,6 @@ export const EMPTY_FILTERS: LookupFilters = {
   building: null,
   itemId: null,
 };
-
-export const MASTER_ACCESS_CODE = "admin-2026";
 
 export function studentKey(firstName: string, lastName: string, grade: string): string {
   return `${firstName.trim().toLowerCase()}|${lastName.trim().toLowerCase()}|${grade.trim().toLowerCase()}`;

@@ -8,142 +8,135 @@ The whole platform exists to answer one question fast:
 
 ## Stack
 
-- Next.js 16 (App Router) + React 19
-- TypeScript (strict)
-- Tailwind CSS v4
-- Zustand for client state (persisted unlock state)
-- Recharts for the dashboard
-- Papaparse for CSV export
+- **Next.js 16** (App Router) + React 19 + TypeScript (strict)
+- **Tailwind CSS v4**
+- **Zustand** for client unlock state (persisted in localStorage)
+- **Recharts** for the dashboard
+- **Papaparse** for CSV export
+- **Firebase Admin (Firestore)** for fundraiser config + access codes
+- **Google Sheets API** (read-only via service account) for live student order data
+- **Vercel** for hosting
 
-Data is fully mocked today (`src/lib/data/mockData.ts`). The whole app talks to a single `DataSource` interface — swap that file for a Firebase + Google Sheets implementation when ready (see [Wiring real data](#wiring-real-data) below).
+## Architecture
 
-## Running locally
+```
+Browser ─→ Next.js API route ─→ Firestore  (fundraiser metadata, codes, sheet config)
+                              ─→ Sheets API (read student order rows)
+```
+
+- The browser **never** talks to Firestore or Sheets directly.
+- Access codes are verified server-side and never leave Firestore.
+- Successful unlock sets an HMAC-signed cookie (`fa_<id>`). Data API routes refuse to respond without a valid cookie.
+- Order data is fetched from Sheets on each request, parsed through the existing engine, and HTTP-cached for 20s.
+
+## First-time setup
+
+If you're standing this up fresh, **follow [SETUP.md](SETUP.md)** — it has the exact clicks for creating a Firebase project, enabling the Sheets API, creating a service account, sharing your real sheets with it, and capturing the env vars.
+
+Once you have credentials:
 
 ```bash
+# 1. install deps
 npm install
+
+# 2. configure
+cp .env.example .env.local
+# fill in FIREBASE_PROJECT_ID, FIREBASE_SERVICE_ACCOUNT_JSON (or GOOGLE_APPLICATION_CREDENTIALS),
+# UNLOCK_COOKIE_SECRET, and MASTER_ACCESS_CODE
+
+# 3. seed Firestore with the default fundraisers
+npm run seed
+
+# 4. run
 npm run dev
 ```
 
 Open <http://localhost:3000>.
 
-The seeded mock fundraisers and their access codes:
+## Without Firebase (design / demo mode)
 
-| Fundraiser | Code |
-|---|---|
-| Junior Pizza | `pizza2026` |
-| Senior Empanada | `empanada2026` |
-| Sophomore Subway | `subway2026` |
-| Freshmen Ice Cream | `icecream2026` |
-| **Master / Admin** | `admin-2026` |
-
-These are defined in `src/lib/data/mockData.ts` and can be overridden per-fundraiser on the **Settings** page (saved to `localStorage` until real persistence lands).
+To poke at the UI without setting up Firebase, set `NEXT_PUBLIC_USE_MOCK_DATA=1` in `.env.local`. The app will use the in-process mock data source for everything. Settings changes persist to `localStorage` only.
 
 ## App structure
 
 ```
 src/
   app/
-    page.tsx                  ← fundraiser picker + access code gate
+    page.tsx                  ← fundraiser picker (server-rendered, codes stripped)
     f/[id]/
-      layout.tsx              ← top bar + bottom nav + unlock check
+      layout.tsx              ← fetches fundraiser server-side, wraps in shell
       lookup/page.tsx         ← CORE: search + filters + result cards
-      dashboard/page.tsx      ← charts (Recharts)
-      reports/page.tsx        ← grouped report views + CSV export + print
-      settings/page.tsx       ← access code + sheet config + column mapping
-  components/                 ← shared UI
+      dashboard/page.tsx      ← charts (items / building / grade)
+      reports/page.tsx        ← grouped views + CSV export + print
+      settings/page.tsx       ← access code + sheet URL + multi-worksheet config
+    api/
+      verify-access/route.ts  ← POST {fundraiserId, code} → cookie on success
+      fundraisers/route.ts    ← GET list (codes stripped)
+      fundraisers/[id]/route.ts ← GET single, PATCH update (cookie required)
+      orders/[id]/route.ts    ← GET parsed orders (cookie required, 20s cache)
+  components/                 ← UI primitives
   lib/
+    auth/cookies.ts           ← HMAC unlock cookie helpers
     data/
-      types.ts                ← StudentOrder, Fundraiser, SheetConfig, ColumnMapping
-      mockData.ts             ← seeded mock fundraisers + ~400 orders total
+      types.ts                ← StudentOrder, Fundraiser, ColumnMapping, etc.
+      mockData.ts             ← seed payload (also used by mock mode)
       parser.ts               ← raw sheet rows + config → StudentOrder[]
-      dataSource.ts           ← the swap point for real data
-    state/appState.ts         ← Zustand: which fundraisers are unlocked
+      dataSource.ts           ← interface; picks clientDataSource / mockClientDataSource
+      clientDataSource.ts     ← UI side: fetches /api/* routes
+      firebaseDataSource.ts   ← server side: Firestore + Sheets
+      mockClientDataSource.ts ← in-process mock (for design mode)
+    firebase/admin.ts         ← Firebase Admin SDK init
+    sheets/client.ts          ← Google Sheets API client (service account auth)
+    state/appState.ts         ← Zustand: which fundraisers are unlocked client-side
     utils/                    ← search, classnames
+scripts/
+  seed.ts                     ← npm run seed → uploads MOCK_FUNDRAISERS to Firestore
+  dev.cmd                     ← Windows dev launcher (used by Claude Preview)
 ```
 
-## Wiring real data
+## Data model highlights
 
-The mock layer is deliberately thin so the swap is mostly a one-file change:
+A `Fundraiser` has:
 
-### 1. Add a Firestore-backed `DataSource`
+- One Sheet URL.
+- One or more `WorksheetSource`s — each tab in the sheet has its own column mapping and items list.
+- Each `FundraiserItem` has a `name`, a `quantityColumn`, and an optional `identifierColumn` (used for things like Subway sub numbers).
 
-Create `src/lib/data/firebaseDataSource.ts` that implements the `DataSource` interface from [`dataSource.ts`](src/lib/data/dataSource.ts:1):
+When a student appears in multiple tabs, the parser merges their lines into one `StudentOrder`. Lookup cards show every item with quantity and optional identifier badges.
 
-```ts
-export const firebaseDataSource: DataSource = {
-  async listFundraisers() { /* read from /fundraisers */ },
-  async getFundraiser(id) { /* read /fundraisers/{id} */ },
-  async listOrders(fundraiserId) { /* read /fundraisers/{id}/orders */ },
-  async updateFundraiser(id, patch) { /* write /fundraisers/{id} */ },
-};
-```
+## Deploying to Vercel
 
-Then change the final line of `dataSource.ts` from:
+1. Push the repo to GitHub.
+2. <https://vercel.com/new> → import the repo. Framework auto-detects Next.js.
+3. Add env vars in the Vercel dashboard (same as `.env.local`):
+   - `FIREBASE_PROJECT_ID`
+   - `FIREBASE_SERVICE_ACCOUNT_JSON` (paste the whole JSON as a single value)
+   - `UNLOCK_COOKIE_SECRET`
+   - `MASTER_ACCESS_CODE`
+4. Deploy.
 
-```ts
-export const dataSource: DataSource = mockDataSource;
-```
+Re-runs of `npm run seed` need to point at the prod project — re-export the same env vars locally and run it, or do it once at setup.
 
-to:
+## Operating notes
 
-```ts
-export const dataSource: DataSource = firebaseDataSource;
-```
+- **Edit a code or sheet config** on the Settings tab (or directly in Firestore at `/fundraisers/<id>`).
+- **Adding a new fundraiser**: add a doc under `/fundraisers/<new-id>` in Firestore with the same shape as the existing ones. It appears on the home page automatically.
+- **Rotating the master code**: change `MASTER_ACCESS_CODE` env var and redeploy. Active unlock cookies stay valid until they expire (12h).
+- **Sheets API quota**: the free tier is 300 read req/min per service account. Far more than a single school can use. If you ever hit it, raise the cache from 20s to 60s in `src/app/api/orders/[id]/route.ts`.
 
-Nothing else in the app changes.
+## What's intentionally not built
 
-### 2. Add Google Sheets fetcher (server-side)
+- Ecommerce / payments
+- Parent or student accounts
+- Push notifications, messaging
+- Offline mode
 
-Sheets are read-only, refreshed on a schedule:
+These are all explicitly out of scope per the original spec.
 
-1. Create a Google Cloud project, enable the Sheets API.
-2. Create a Service Account, download the JSON key.
-3. Share each fundraiser sheet with the service account's email (Viewer is enough).
-4. Store the credentials as an env var:
-
-   ```bash
-   GOOGLE_SERVICE_ACCOUNT_JSON='{ "type": "service_account", ... }'
-   ```
-
-5. Add `src/app/api/sync/[id]/route.ts` (Next.js API route) that:
-   - Loads the fundraiser's `sheetConfig` from Firestore.
-   - Fetches the raw sheet via `googleapis`.
-   - Runs the rows through [`parseSheet`](src/lib/data/parser.ts:1) — this part already works.
-   - Writes the resulting `StudentOrder[]` to Firestore.
-
-6. Trigger the sync every 15–30s from a Firebase Function on a schedule, or fetch-on-load on the client.
-
-The parser is the load-bearing piece and is already done — it handles header-row offsets, missing columns, type coercion, and inconsistent building values.
-
-### 3. Move access codes to Firestore
-
-Today access codes live in `mockData.ts` / `localStorage`. Move them to a `/fundraisers/{id}` Firestore doc and have the unlock action call a `verifyAccessCode` Cloud Function so the code never ships to the browser. The `useAppState` store stays unchanged.
-
-## Mobile-first notes
+## Mobile UX notes
 
 - Bottom tab nav, 64px touch targets.
 - 16px form inputs to prevent iOS auto-zoom.
 - `pb-24` on every main scroll region clears the bottom nav.
 - `print:hidden` hides controls on the Reports page when printing pickup lists.
-- Filters live in a sticky band so search/filter state stays reachable while scrolling.
-
-## What's intentionally not built
-
-These are listed in the original spec as **not needed** — and they aren't:
-
-- Ecommerce / payments
-- Parent or student accounts
-- Push notifications, messaging
-- Direct sheet editing
-- Offline mode (yet)
-
-## Roadmap shorthand
-
-| Phase | Status |
-|---|---|
-| 1. Google Sheets integration | mock → real |
-| 2. Mapping engine | ✅ |
-| 3. Lookup | ✅ |
-| 4. Dashboard | ✅ |
-| 5. Reports + export | ✅ |
-| 6. Mobile polish | ✅ |
+- Sticky search + filters band stays visible while scrolling the lookup list.

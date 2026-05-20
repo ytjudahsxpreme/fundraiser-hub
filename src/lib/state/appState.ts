@@ -2,11 +2,11 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { MASTER_ACCESS_CODE } from "../data/types";
+import { verifyAccessCode as serverVerify } from "@/lib/data/clientDataSource";
 
 interface AppState {
   unlockedFundraisers: string[];
-  unlock: (id: string, code: string, expectedCode: string) => boolean;
+  unlock: (id: string, code: string) => Promise<boolean>;
   lock: (id: string) => void;
   lockAll: () => void;
   isUnlocked: (id: string) => boolean;
@@ -16,11 +16,8 @@ export const useAppState = create<AppState>()(
   persist(
     (set, get) => ({
       unlockedFundraisers: [],
-      unlock: (id, code, expectedCode) => {
-        const trimmed = code.trim();
-        const ok =
-          trimmed.length > 0 &&
-          (trimmed === expectedCode || trimmed === MASTER_ACCESS_CODE);
+      unlock: async (id, code) => {
+        const ok = await serverVerify(id, code);
         if (ok && !get().unlockedFundraisers.includes(id)) {
           set({ unlockedFundraisers: [...get().unlockedFundraisers, id] });
         }

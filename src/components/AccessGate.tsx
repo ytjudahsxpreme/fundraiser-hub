@@ -16,23 +16,34 @@ export function AccessGate({ fundraiser, open, onClose }: Props) {
   const unlock = useAppState((s) => s.unlock);
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (!open) {
       setCode("");
       setError(null);
+      setSubmitting(false);
     }
   }, [open]);
 
   if (!open) return null;
 
-  function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
-    const ok = unlock(fundraiser.id, code, fundraiser.accessCode);
-    if (ok) {
-      router.push(`/f/${fundraiser.id}/lookup`);
-    } else {
-      setError("Incorrect access code. Try again.");
+    if (submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const ok = await unlock(fundraiser.id, code);
+      if (ok) {
+        router.push(`/f/${fundraiser.id}/lookup`);
+      } else {
+        setError("Incorrect access code. Try again.");
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -91,9 +102,10 @@ export function AccessGate({ fundraiser, open, onClose }: Props) {
             </button>
             <button
               type="submit"
-              className="flex-1 rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white hover:bg-slate-800 active:bg-slate-950"
+              disabled={submitting}
+              className="flex-1 rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white hover:bg-slate-800 active:bg-slate-950 disabled:opacity-60"
             >
-              Unlock
+              {submitting ? "Checking…" : "Unlock"}
             </button>
           </div>
           <p className="mt-4 text-xs text-slate-500 text-center">
