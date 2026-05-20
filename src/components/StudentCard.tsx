@@ -1,6 +1,7 @@
 import type { StudentOrder } from "@/lib/data/types";
 
 export function StudentCard({ order }: { order: StudentOrder }) {
+  const isStaff = order.building === "STAFF";
   return (
     <article className="rounded-2xl bg-white border border-slate-200 shadow-sm overflow-hidden">
       <header className="flex items-start justify-between gap-3 p-4 sm:p-5">
@@ -9,13 +10,23 @@ export function StudentCard({ order }: { order: StudentOrder }) {
             {order.firstName} {order.lastName}
           </h3>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-600">
-            <span>
-              Grade <span className="font-medium text-slate-900">{order.grade}</span>
-            </span>
-            <span className="text-slate-300">•</span>
-            <span>
-              <span className="font-medium text-slate-900">{order.building}</span>
-            </span>
+            {isStaff ? (
+              <span className="inline-flex items-center rounded-md bg-violet-100 text-violet-800 text-[11px] font-semibold uppercase tracking-wide px-1.5 py-0.5">
+                Teacher / Staff
+              </span>
+            ) : (
+              <>
+                {order.grade && (
+                  <span>
+                    Grade <span className="font-medium text-slate-900">{order.grade}</span>
+                  </span>
+                )}
+                {order.grade && order.building && <span className="text-slate-300">•</span>}
+                <span>
+                  <span className="font-medium text-slate-900">{order.building}</span>
+                </span>
+              </>
+            )}
           </div>
         </div>
         <div className="shrink-0 text-right">

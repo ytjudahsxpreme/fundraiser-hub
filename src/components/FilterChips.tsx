@@ -50,7 +50,13 @@ export function FilterChips({ filters, onChange, availableGrades, availableItems
           <button
             type="button"
             onClick={() =>
-              onChange({ query: filters.query, grade: null, building: null, itemId: null })
+              onChange({
+                query: filters.query,
+                grade: null,
+                building: null,
+                itemId: null,
+                deliveryDate: filters.deliveryDate,
+              })
             }
             className="text-xs font-medium text-slate-500 hover:text-slate-700 ml-1"
           >

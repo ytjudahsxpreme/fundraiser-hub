@@ -27,6 +27,7 @@ const BUILDING_COLORS: Record<Building, string> = {
   UE: "#22c55e",
   MS: "#f59e0b",
   HS: "#ef4444",
+  STAFF: "#8b5cf6",
 };
 
 export default function DashboardPage() {
