@@ -28,18 +28,42 @@ export function buildingForGrade(grade: string): Building {
 }
 
 /**
+ * Attribute column that doesn't carry a quantity — it carries a
+ * configuration value for the item. Used for things like Subway, where
+ * each row represents one sub but has Meat ("Turkey") and topping
+ * checkmarks (Cheese/Lettuce/Mayo etc.).
+ */
+export interface ItemAttribute {
+  /** Sheet column name to read. */
+  column: string;
+  /** Display label on the card. Defaults to `column` if omitted. */
+  label?: string;
+  /**
+   * "text"    → display the cell's value verbatim ("Turkey", "BMT (Italian)")
+   * "boolean" → display the label only when the cell has a truthy value (e.g. "x")
+   */
+  type: "text" | "boolean";
+}
+
+/**
  * One item the fundraiser sells. A fundraiser usually has several
  * (pizza + chips + juice; empanada flavors; sub + numbered ticket; etc.).
  * deliveryDate, when set, lets the lookup UI offer a per-delivery-date view
  * (so distribution day shows only that day's items).
+ *
+ * If quantityColumn is omitted, the parser treats each matched row as
+ * quantity 1 (used for Subway where each row IS one sub).
+ *
+ * attributes lets the line render extra configuration data on the card.
  */
 export interface FundraiserItem {
   id: string;
   name: string;
-  quantityColumn: string;
+  quantityColumn?: string;
   identifierColumn?: string;
   /** ISO date (YYYY-MM-DD) or short label ("MAY 6"). Optional. */
   deliveryDate?: string;
+  attributes?: ItemAttribute[];
 }
 
 /**
@@ -60,6 +84,11 @@ export interface WorksheetSource {
   gradeOverride?: string;
   /** If set, every row in this tab gets this building (no building column needed). */
   buildingOverride?: Building;
+  /**
+   * If set, every line item from this tab gets this delivery date (unless the
+   * item itself has one). Useful for sheets where the tab IS the date.
+   */
+  deliveryDateOverride?: string;
   columnMapping: ColumnMapping;
   items: FundraiserItem[];
 }
@@ -71,6 +100,12 @@ export interface ColumnMapping {
   grade?: string;
   building?: string;
   notes?: string;
+  /**
+   * Alternative to firstName + lastName for sheets that store the full name
+   * in a single column. When set, the value is split on the LAST whitespace
+   * — "Jude Stender" → first "Jude", last "Stender".
+   */
+  fullNameColumn?: string;
 }
 
 export interface SheetConfig {
@@ -99,6 +134,11 @@ export interface StudentOrderLine {
   identifier?: string;
   /** Copied from FundraiserItem.deliveryDate so the UI can group/filter by date. */
   deliveryDate?: string;
+  /**
+   * Resolved attribute values for this line. Each entry's `value` is the raw
+   * cell value (a string for "text" attributes, "" or "x" / truthy for boolean).
+   */
+  attributes?: Array<{ label: string; value: string; type: "text" | "boolean" }>;
 }
 
 export interface StudentOrder {

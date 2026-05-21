@@ -1,13 +1,13 @@
 /**
- * Programmatic configuration for the real K-12 fundraiser sheets we saw in
- * the field. Used by the seed script; kept separate so mockData stays as a
- * standalone reference shape.
+ * Programmatic configuration for the real fundraiser sheets we saw in the
+ * field. Used by the seed script.
  */
 import {
   buildingForGrade,
   type Building,
   type Fundraiser,
   type FundraiserItem,
+  type ItemAttribute,
   type WorksheetSource,
 } from "../src/lib/data/types";
 
@@ -51,16 +51,12 @@ const BASE_MAPPING = {
 };
 
 interface DateProduct {
-  /** Short label shown in the UI (e.g. "May 6"). */
   date: string;
-  /** ISO date for sorting / "today" comparison. */
   iso: string;
 }
 
 interface ItemDef {
-  /** Used in the spreadsheet's row-1 header above the date (e.g. "C&J", "PIZZA"). */
   product: string;
-  /** Pretty display label (e.g. "Chips & Juice", "Pizza Slice"). */
   display: string;
 }
 
@@ -71,8 +67,6 @@ function makeItems(dates: DateProduct[], products: ItemDef[]): FundraiserItem[] 
       out.push({
         id: `${d.iso}-${p.product.toLowerCase().replace(/[^a-z0-9]+/g, "")}`,
         name: `${d.date} · ${p.display}`,
-        // Composite header from the parser is `"${row1} — ${row2}"`. Row 1 has
-        // the product, row 2 has the date.
         quantityColumn: `${p.product} — ${d.date}`,
         deliveryDate: d.iso,
       });
@@ -81,7 +75,7 @@ function makeItems(dates: DateProduct[], products: ItemDef[]): FundraiserItem[] 
   return out;
 }
 
-function buildWorksheets(tabs: GradeTab[], items: FundraiserItem[]): WorksheetSource[] {
+function buildGradeTabWorksheets(tabs: GradeTab[], items: FundraiserItem[]): WorksheetSource[] {
   return tabs.map((t) => ({
     id: t.id,
     name: t.tab,
@@ -95,6 +89,8 @@ function buildWorksheets(tabs: GradeTab[], items: FundraiserItem[]): WorksheetSo
   }));
 }
 
+// ── Pizza ────────────────────────────────────────────────────────────────────
+
 const PIZZA_DATES: DateProduct[] = [
   { date: "MAY 6", iso: "2026-05-06" },
   { date: "MAY 13", iso: "2026-05-13" },
@@ -106,6 +102,8 @@ const PIZZA_PRODUCTS: ItemDef[] = [
   { product: "C&J", display: "Chips & Juice" },
   { product: "PIZZA", display: "Pizza" },
 ];
+
+// ── Empanadas ────────────────────────────────────────────────────────────────
 
 const EMPANADA_DATES: DateProduct[] = [
   { date: "May 1", iso: "2026-05-01" },
@@ -121,6 +119,110 @@ const EMPANADA_PRODUCTS: ItemDef[] = [
   { product: "Chicken", display: "Chicken Empanada" },
 ];
 
+// ── Ice Cream ────────────────────────────────────────────────────────────────
+// Same shape as Pizza/Empanada: 13 tabs (K-12), multi-row headers, dated cols.
+// The sheet has a NUTTY column between each week's block that has no row-2
+// date — we skip those since they aren't tied to a delivery date.
+
+const ICECREAM_DATES: DateProduct[] = [
+  { date: "MAY 7", iso: "2026-05-07" },
+  { date: "MAY 14", iso: "2026-05-14" },
+  { date: "MAY 21", iso: "2026-05-21" },
+  { date: "MAY 28", iso: "2026-05-28" },
+];
+
+const ICECREAM_PRODUCTS: ItemDef[] = [
+  { product: "STRAW", display: "Strawberry" },
+  { product: "ORANGE", display: "Orange" },
+  { product: "SAND", display: "Sandwich" },
+  { product: "DIXIE", display: "Dixie Cup" },
+];
+
+// ── Subway ───────────────────────────────────────────────────────────────────
+// 34 tabs; each tab IS one delivery date. Tab names encode the date as MMDD,
+// MM+D, M+DD, or M+D depending on digit count. School year is Sept 2025 →
+// May 2026, so months 9-12 are 2025 and months 1-5 are 2026.
+
+const SUBWAY_TAB_TO_ISO: Record<string, string> = {
+  "923": "2025-09-23",
+  "930": "2025-09-30",
+  "107": "2025-10-07",
+  "1014": "2025-10-14",
+  "1021": "2025-10-21",
+  "1028": "2025-10-28",
+  "114": "2025-11-04",
+  "1111": "2025-11-11",
+  "1118": "2025-11-18",
+  "1125": "2025-11-25",
+  "129": "2025-12-09",
+  "1216": "2025-12-16",
+  "16": "2026-01-06",
+  "113": "2026-01-13",
+  "120": "2026-01-20",
+  "127": "2026-01-27",
+  "23": "2026-02-03",
+  "210": "2026-02-10",
+  "217": "2026-02-17",
+  "224": "2026-02-24",
+  "122": "2026-01-22",
+  "33": "2026-03-03",
+  "310": "2026-03-10",
+  "317": "2026-03-17",
+  "324": "2026-03-24",
+  "331": "2026-03-31",
+  "47": "2026-04-07",
+  "414": "2026-04-14",
+  "421": "2026-04-21",
+  "428": "2026-04-28",
+  "55": "2026-05-05",
+  "512": "2026-05-12",
+  "519": "2026-05-19",
+  "526": "2026-05-26",
+};
+
+const SUBWAY_TOPPING_ATTRS: ItemAttribute[] = [
+  { column: "Cheese", label: "Cheese", type: "boolean" },
+  { column: "Lettuce", label: "Lettuce", type: "boolean" },
+  { column: "Tomatoes", label: "Tomato", type: "boolean" },
+  { column: "Mustard", label: "Mustard", type: "boolean" },
+  { column: "Mayo", label: "Mayo", type: "boolean" },
+];
+
+const SUBWAY_ITEMS: FundraiserItem[] = [
+  {
+    id: "sub",
+    name: "Sub",
+    identifierColumn: "#",
+    attributes: [
+      { column: "Meat", label: "Meat", type: "text" },
+      ...SUBWAY_TOPPING_ATTRS,
+    ],
+  },
+];
+
+function buildSubwayWorksheets(): WorksheetSource[] {
+  const out: WorksheetSource[] = [];
+  for (const [tab, iso] of Object.entries(SUBWAY_TAB_TO_ISO)) {
+    out.push({
+      id: `subway-${iso}`,
+      name: tab,
+      headerRow: 1,
+      dataStartRow: 2,
+      deliveryDateOverride: iso,
+      columnMapping: {
+        firstName: "", // unused
+        lastName: "", // unused
+        fullNameColumn: "Name",
+        grade: "Grade",
+      },
+      items: SUBWAY_ITEMS,
+    });
+  }
+  return out;
+}
+
+// ── Fundraiser assembly ──────────────────────────────────────────────────────
+
 export function buildRealFundraisers(opts: {
   pizzaSheetUrl?: string;
   empanadasSheetUrl?: string;
@@ -129,9 +231,6 @@ export function buildRealFundraisers(opts: {
   accessCodes?: Record<string, string>;
 }): Fundraiser[] {
   const codes = opts.accessCodes ?? {};
-
-  const pizzaItems = makeItems(PIZZA_DATES, PIZZA_PRODUCTS);
-  const empanadaItems = makeItems(EMPANADA_DATES, EMPANADA_PRODUCTS);
 
   return [
     {
@@ -143,7 +242,7 @@ export function buildRealFundraisers(opts: {
       emoji: "🍕",
       sheetConfig: {
         sheetUrl: opts.pizzaSheetUrl ?? "",
-        worksheets: buildWorksheets(tabsFor(true), pizzaItems),
+        worksheets: buildGradeTabWorksheets(tabsFor(true), makeItems(PIZZA_DATES, PIZZA_PRODUCTS)),
       },
     },
     {
@@ -155,7 +254,7 @@ export function buildRealFundraisers(opts: {
       emoji: "🥟",
       sheetConfig: {
         sheetUrl: opts.empanadasSheetUrl ?? "",
-        worksheets: buildWorksheets(tabsFor(false), empanadaItems),
+        worksheets: buildGradeTabWorksheets(tabsFor(false), makeItems(EMPANADA_DATES, EMPANADA_PRODUCTS)),
       },
     },
     {
@@ -167,8 +266,7 @@ export function buildRealFundraisers(opts: {
       emoji: "🥪",
       sheetConfig: {
         sheetUrl: opts.subwaySheetUrl ?? "",
-        // Placeholder until you share the real sheet structure. Edit on Settings.
-        worksheets: buildWorksheets(tabsFor(false), []),
+        worksheets: buildSubwayWorksheets(),
       },
     },
     {
@@ -180,7 +278,7 @@ export function buildRealFundraisers(opts: {
       emoji: "🍦",
       sheetConfig: {
         sheetUrl: opts.icecreamSheetUrl ?? "",
-        worksheets: buildWorksheets(tabsFor(false), []),
+        worksheets: buildGradeTabWorksheets(tabsFor(false), makeItems(ICECREAM_DATES, ICECREAM_PRODUCTS)),
       },
     },
   ];

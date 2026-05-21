@@ -16,7 +16,6 @@ export interface WorksheetParseResult {
   parsedRows: ParsedRow[];
   warnings: string[];
   skippedRows: number;
-  /** Composite header strings derived from the configured header rows. */
   composedHeaders: string[];
 }
 
@@ -42,12 +41,6 @@ function normalizeHeader(s: unknown): string {
   return String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-/**
- * Combine `count` rows ending at `headerRowIndex` (0-based) into one
- * composite header per column. Empty cells in earlier rows are dropped so a
- * header like row1="" / row2="First Name" stays "First Name", and
- * row1="PIZZA" / row2="MAY 6" becomes "PIZZA — MAY 6".
- */
 function composeHeader(rawSheet: RawRow[], headerRowIndex: number, count: number): string[] {
   const rows: RawRow[] = [];
   for (let i = headerRowIndex - count + 1; i <= headerRowIndex; i++) {
@@ -69,12 +62,8 @@ function composeHeader(rawSheet: RawRow[], headerRowIndex: number, count: number
 function findHeaderIndex(headers: string[], columnName: string | undefined): number {
   if (!columnName) return -1;
   const target = normalizeHeader(columnName);
-  // Pass 1: exact match (case + whitespace normalized).
   const exact = headers.findIndex((h) => normalizeHeader(h) === target);
   if (exact >= 0) return exact;
-  // Pass 2: suffix match. Lets "Last Name" find a composite "Kindergarten — Last Name"
-  // without needing per-tab column mappings. Only returns a hit if exactly one
-  // header ends with the requested suffix, so we never silently pick the wrong one.
   const sepRe = new RegExp(`[—·:|\\-]\\s*${target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
   const suffixMatches = headers
     .map((h, i) => ({ h: normalizeHeader(h), i }))
@@ -107,6 +96,41 @@ function normalizeBuildingFromCell(cell: string, grade: string): Building {
   return buildingForGrade(grade);
 }
 
+/** Strip ordinal suffix from grade strings: "1st" → "1", "K" → "K", "12th" → "12". */
+function normalizeGrade(raw: string): string {
+  const s = raw.trim();
+  if (!s) return "";
+  if (/^k(indergarten)?$/i.test(s)) return "K";
+  const m = s.match(/^(\d{1,2})\s*(st|nd|rd|th)?\b/i);
+  if (m) return m[1];
+  return s;
+}
+
+/** Split "Last, First" → [first, last]. Split "Jude Stender" → ["Jude", "Stender"].
+ *  Multi-word names like "Jose Manuel Diaz" → ["Jose Manuel", "Diaz"] (last
+ *  word is the surname). */
+function splitFullName(raw: string): { firstName: string; lastName: string } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { firstName: "", lastName: "" };
+  if (trimmed.includes(",")) {
+    const [last, first] = trimmed.split(",", 2);
+    return { firstName: first.trim(), lastName: last.trim() };
+  }
+  const parts = trimmed.split(/\s+/);
+  if (parts.length === 1) return { firstName: parts[0], lastName: "" };
+  const lastName = parts[parts.length - 1];
+  const firstName = parts.slice(0, -1).join(" ");
+  return { firstName, lastName };
+}
+
+function isTruthyAttribute(raw: unknown): boolean {
+  if (raw == null) return false;
+  const s = String(raw).trim().toLowerCase();
+  if (!s) return false;
+  if (s === "0" || s === "false" || s === "no" || s === "n" || s === "-") return false;
+  return true;
+}
+
 export function parseWorksheet(rawSheet: RawRow[], worksheet: WorksheetSource): WorksheetParseResult {
   const warnings: string[] = [];
   const {
@@ -117,6 +141,7 @@ export function parseWorksheet(rawSheet: RawRow[], worksheet: WorksheetSource): 
     items,
     gradeOverride,
     buildingOverride,
+    deliveryDateOverride,
   } = worksheet;
   const rowCount = headerRowsCount && headerRowsCount > 0 ? headerRowsCount : 1;
 
@@ -135,26 +160,37 @@ export function parseWorksheet(rawSheet: RawRow[], worksheet: WorksheetSource): 
   const baseIdx = {
     firstName: findHeaderIndex(headers, columnMapping.firstName),
     lastName: findHeaderIndex(headers, columnMapping.lastName),
+    fullName: findHeaderIndex(headers, columnMapping.fullNameColumn),
     grade: findHeaderIndex(headers, columnMapping.grade),
     building: findHeaderIndex(headers, columnMapping.building),
     notes: findHeaderIndex(headers, columnMapping.notes),
   };
 
-  if (baseIdx.firstName < 0)
-    warnings.push(`Column "${columnMapping.firstName}" (First Name) not found in header.`);
-  if (baseIdx.lastName < 0)
-    warnings.push(`Column "${columnMapping.lastName}" (Last Name) not found in header.`);
+  const usingFullName = baseIdx.fullName >= 0;
+  if (!usingFullName) {
+    if (baseIdx.firstName < 0)
+      warnings.push(`Column "${columnMapping.firstName}" (First Name) not found in header.`);
+    if (baseIdx.lastName < 0)
+      warnings.push(`Column "${columnMapping.lastName}" (Last Name) not found in header.`);
+  }
 
   const itemIndices = items.map((it) => ({
     item: it,
-    qtyIdx: findHeaderIndex(headers, it.quantityColumn),
+    qtyIdx: it.quantityColumn ? findHeaderIndex(headers, it.quantityColumn) : -1,
     idIdx: findHeaderIndex(headers, it.identifierColumn),
+    attributes: (it.attributes ?? []).map((a) => ({
+      def: a,
+      idx: findHeaderIndex(headers, a.column),
+    })),
   }));
   for (const ii of itemIndices) {
-    if (ii.qtyIdx < 0) {
+    if (ii.item.quantityColumn && ii.qtyIdx < 0) {
       warnings.push(
         `Item "${ii.item.name}": quantity column "${ii.item.quantityColumn}" not found.`,
       );
+    }
+    for (const a of ii.attributes) {
+      if (a.idx < 0) warnings.push(`Attribute column "${a.def.column}" not found.`);
     }
   }
 
@@ -163,23 +199,50 @@ export function parseWorksheet(rawSheet: RawRow[], worksheet: WorksheetSource): 
 
   for (let r = dataStartRow - 1; r < rawSheet.length; r++) {
     const row = rawSheet[r] ?? [];
-    const firstName = pickCell(row, baseIdx.firstName);
-    const lastName = pickCell(row, baseIdx.lastName);
-    // Require BOTH names — otherwise rollup / summary rows ("HS MAIN", "Lower Elem",
-    // "TOTAL") get picked up as students. Students reliably have both.
+
+    let firstName = "";
+    let lastName = "";
+    if (usingFullName) {
+      const split = splitFullName(pickCell(row, baseIdx.fullName));
+      firstName = split.firstName;
+      lastName = split.lastName;
+    } else {
+      firstName = pickCell(row, baseIdx.firstName);
+      lastName = pickCell(row, baseIdx.lastName);
+    }
     if (!firstName || !lastName) continue;
 
     const lines: StudentOrderLine[] = [];
     for (const ii of itemIndices) {
-      const qty = coerceQuantity(row[ii.qtyIdx]);
+      // If item has no quantityColumn, treat as qty=1 (one row = one unit).
+      // If it has a quantityColumn but the cell is 0/empty, skip this item.
+      const qty = ii.item.quantityColumn
+        ? coerceQuantity(row[ii.qtyIdx])
+        : 1;
       if (qty <= 0) continue;
+
       const identifier = ii.idIdx >= 0 ? pickCell(row, ii.idIdx) || undefined : undefined;
+      const attrs: StudentOrderLine["attributes"] = [];
+      for (const a of ii.attributes) {
+        if (a.idx < 0) continue;
+        const raw = row[a.idx];
+        const label = a.def.label ?? a.def.column;
+        if (a.def.type === "boolean") {
+          if (isTruthyAttribute(raw)) {
+            attrs.push({ label, value: String(raw).trim(), type: "boolean" });
+          }
+        } else {
+          const v = pickCell(row, a.idx);
+          if (v) attrs.push({ label, value: v, type: "text" });
+        }
+      }
       lines.push({
         itemId: ii.item.id,
         itemName: ii.item.name,
         quantity: qty,
         identifier,
-        deliveryDate: ii.item.deliveryDate,
+        deliveryDate: ii.item.deliveryDate ?? deliveryDateOverride,
+        attributes: attrs.length > 0 ? attrs : undefined,
       });
     }
     if (lines.length === 0) {
@@ -187,7 +250,8 @@ export function parseWorksheet(rawSheet: RawRow[], worksheet: WorksheetSource): 
       continue;
     }
 
-    const grade = gradeOverride ?? pickCell(row, baseIdx.grade) ?? "";
+    const gradeRaw = gradeOverride ?? pickCell(row, baseIdx.grade);
+    const grade = normalizeGrade(gradeRaw);
     const building: Building =
       buildingOverride ??
       (() => {

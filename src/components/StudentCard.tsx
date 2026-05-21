@@ -1,4 +1,4 @@
-import type { StudentOrder } from "@/lib/data/types";
+import type { StudentOrder, StudentOrderLine } from "@/lib/data/types";
 
 export function StudentCard({ order }: { order: StudentOrder }) {
   const isStaff = order.building === "STAFF";
@@ -41,22 +41,7 @@ export function StudentCard({ order }: { order: StudentOrder }) {
 
       <ul className="border-t border-slate-100 divide-y divide-slate-100 bg-slate-50/40">
         {order.lines.map((line, i) => (
-          <li
-            key={`${line.itemId}-${i}`}
-            className="flex items-center gap-3 px-4 sm:px-5 py-2.5 text-sm"
-          >
-            <span className="flex-1 min-w-0">
-              <span className="font-semibold text-slate-900">{line.itemName}</span>
-              {line.identifier && (
-                <span className="ml-2 inline-flex items-center rounded-md bg-slate-900/90 text-white text-[11px] font-mono px-1.5 py-0.5 tabular-nums">
-                  {line.identifier}
-                </span>
-              )}
-            </span>
-            <span className="text-base font-semibold tabular-nums text-slate-900">
-              ×{line.quantity}
-            </span>
-          </li>
+          <LineRow key={`${line.itemId}-${i}`} line={line} />
         ))}
       </ul>
 
@@ -73,5 +58,52 @@ export function StudentCard({ order }: { order: StudentOrder }) {
         </div>
       )}
     </article>
+  );
+}
+
+function LineRow({ line }: { line: StudentOrderLine }) {
+  const textAttrs = (line.attributes ?? []).filter((a) => a.type === "text");
+  const boolAttrs = (line.attributes ?? []).filter((a) => a.type === "boolean");
+
+  return (
+    <li className="px-4 sm:px-5 py-2.5 text-sm">
+      <div className="flex items-center gap-3">
+        <span className="flex-1 min-w-0">
+          <span className="font-semibold text-slate-900">{line.itemName}</span>
+          {line.identifier && (
+            <span className="ml-2 inline-flex items-center rounded-md bg-slate-900/90 text-white text-[11px] font-mono px-1.5 py-0.5 tabular-nums">
+              #{line.identifier.replace(/^#/, "")}
+            </span>
+          )}
+          {textAttrs.map((a) => (
+            <span
+              key={a.label}
+              className="ml-2 inline-flex items-center text-[12px] font-medium text-slate-700"
+            >
+              <span className="text-slate-400 mr-1">{a.label}:</span>
+              <span>{a.value}</span>
+            </span>
+          ))}
+        </span>
+        <span className="text-base font-semibold tabular-nums text-slate-900">
+          ×{line.quantity}
+        </span>
+      </div>
+      {boolAttrs.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1 pl-0.5">
+          {boolAttrs.map((a) => (
+            <span
+              key={a.label}
+              className="inline-flex items-center gap-1 rounded-full bg-emerald-50 text-emerald-800 text-[11px] font-medium px-2 py-0.5"
+            >
+              <svg viewBox="0 0 24 24" className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+              {a.label}
+            </span>
+          ))}
+        </div>
+      )}
+    </li>
   );
 }
