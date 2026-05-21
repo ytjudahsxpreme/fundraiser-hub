@@ -4,11 +4,15 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { MasterCodeCard } from "@/components/MasterCodeCard";
 import { dataSource } from "@/lib/data/dataSource";
-import type {
-  ColumnMapping,
-  Fundraiser,
-  FundraiserItem,
-  WorksheetSource,
+import {
+  BUILDING_LABELS,
+  BUILDING_ORDER,
+  type Building,
+  type ColumnMapping,
+  type Fundraiser,
+  type FundraiserItem,
+  type ItemAttribute,
+  type WorksheetSource,
 } from "@/lib/data/types";
 import { cn } from "@/lib/utils/cn";
 
@@ -341,6 +345,8 @@ function WorksheetEditor({
           </div>
         </div>
 
+        <AdvancedWorksheetSection worksheet={worksheet} onChange={onChange} />
+
         <div>
           <div className="flex items-center justify-between mb-2">
             <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Items</h4>
@@ -391,7 +397,20 @@ function ItemEditor({
   onChange: (next: FundraiserItem) => void;
   onRemove: () => void;
 }) {
-  const hasIdentifier = item.identifierColumn !== undefined;
+  function updateAttribute(index: number, next: ItemAttribute) {
+    const attrs = [...(item.attributes ?? [])];
+    attrs[index] = next;
+    onChange({ ...item, attributes: attrs });
+  }
+  function addAttribute() {
+    const attrs = [...(item.attributes ?? []), { column: "", label: "", type: "boolean" as const }];
+    onChange({ ...item, attributes: attrs });
+  }
+  function removeAttribute(index: number) {
+    const attrs = (item.attributes ?? []).filter((_, i) => i !== index);
+    onChange({ ...item, attributes: attrs.length === 0 ? undefined : attrs });
+  }
+
   return (
     <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-3 space-y-2">
       <div className="flex items-center gap-2">
@@ -417,30 +436,240 @@ function ItemEditor({
         <label className="text-xs text-slate-600">Quantity col</label>
         <input
           type="text"
-          value={item.quantityColumn}
-          onChange={(e) => onChange({ ...item, quantityColumn: e.target.value })}
-          placeholder="e.g. Pizza #"
+          value={item.quantityColumn ?? ""}
+          onChange={(e) =>
+            onChange({ ...item, quantityColumn: e.target.value || undefined })
+          }
+          placeholder="Leave blank = 1 per row (Subway-style)"
           className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-mono outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
         />
       </div>
       <div className="grid grid-cols-[110px_1fr] items-center gap-3">
         <label className="text-xs text-slate-600">Identifier col</label>
-        <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={item.identifierColumn ?? ""}
+          onChange={(e) =>
+            onChange({ ...item, identifierColumn: e.target.value || undefined })
+          }
+          placeholder="Optional · e.g. Sub Numbers"
+          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-mono outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+        />
+      </div>
+      <div className="grid grid-cols-[110px_1fr] items-center gap-3">
+        <label className="text-xs text-slate-600">Delivery date</label>
+        <input
+          type="text"
+          value={item.deliveryDate ?? ""}
+          onChange={(e) =>
+            onChange({ ...item, deliveryDate: e.target.value || undefined })
+          }
+          placeholder="Optional · ISO like 2026-05-20 or short label"
+          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-mono outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+        />
+      </div>
+
+      <details className="rounded-lg border border-slate-200 bg-white/50 mt-1">
+        <summary className="flex items-center justify-between px-3 py-1.5 cursor-pointer list-none text-[11px] uppercase tracking-wide text-slate-500 font-semibold">
+          <span>
+            Attributes
+            {item.attributes && item.attributes.length > 0 ? ` · ${item.attributes.length}` : ""}
+          </span>
+          <span className="text-[10px] text-slate-400 normal-case font-normal tracking-normal">
+            text choice / topping checkmarks
+          </span>
+        </summary>
+        <div className="border-t border-slate-200 px-3 py-2 space-y-2">
+          {(item.attributes ?? []).map((a, i) => (
+            <AttributeEditor
+              key={`attr-${i}`}
+              attr={a}
+              onChange={(next) => updateAttribute(i, next)}
+              onRemove={() => removeAttribute(i)}
+            />
+          ))}
+          <button
+            type="button"
+            onClick={addAttribute}
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          >
+            <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            Add attribute
+          </button>
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function AttributeEditor({
+  attr,
+  onChange,
+  onRemove,
+}: {
+  attr: ItemAttribute;
+  onChange: (next: ItemAttribute) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-2 grid grid-cols-[1fr_1fr_auto_auto] gap-2 items-center">
+      <input
+        type="text"
+        value={attr.column}
+        onChange={(e) => onChange({ ...attr, column: e.target.value })}
+        placeholder="Sheet column"
+        className="rounded-md border border-slate-300 px-2 py-1.5 text-xs font-mono outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+      />
+      <input
+        type="text"
+        value={attr.label ?? ""}
+        onChange={(e) => onChange({ ...attr, label: e.target.value })}
+        placeholder="Label (optional)"
+        className="rounded-md border border-slate-300 px-2 py-1.5 text-xs outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+      />
+      <select
+        value={attr.type}
+        onChange={(e) => onChange({ ...attr, type: e.target.value as "text" | "boolean" })}
+        className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+      >
+        <option value="boolean">checkmark (x)</option>
+        <option value="text">text choice</option>
+      </select>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="rounded-md p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+        aria-label="Remove attribute"
+      >
+        <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M18 6 6 18M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
+function AdvancedWorksheetSection({
+  worksheet,
+  onChange,
+}: {
+  worksheet: WorksheetSource;
+  onChange: (next: WorksheetSource) => void;
+}) {
+  const anyAdvancedSet =
+    (worksheet.headerRowsCount ?? 1) > 1 ||
+    !!worksheet.gradeOverride ||
+    !!worksheet.buildingOverride ||
+    !!worksheet.deliveryDateOverride ||
+    !!worksheet.columnMapping.fullNameColumn;
+
+  return (
+    <details className="rounded-xl border border-slate-200 bg-slate-50/60" open={anyAdvancedSet}>
+      <summary className="flex items-center justify-between px-3 py-2 cursor-pointer list-none">
+        <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+          Advanced
+        </span>
+        <span className="text-[10px] text-slate-400 normal-case tracking-normal">
+          multi-row headers · tab-level overrides · full-name column
+        </span>
+      </summary>
+      <div className="border-t border-slate-200 px-3 py-3 space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Header rows to combine">
+            <input
+              type="number"
+              min={1}
+              value={worksheet.headerRowsCount ?? 1}
+              onChange={(e) =>
+                onChange({
+                  ...worksheet,
+                  headerRowsCount: Math.max(1, parseInt(e.target.value || "1", 10)),
+                })
+              }
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm tabular-nums outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+            />
+          </Field>
+          <Field label="Building override">
+            <select
+              value={worksheet.buildingOverride ?? ""}
+              onChange={(e) =>
+                onChange({
+                  ...worksheet,
+                  buildingOverride: (e.target.value || undefined) as Building | undefined,
+                })
+              }
+              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+            >
+              <option value="">— from grade —</option>
+              {BUILDING_ORDER.map((b) => (
+                <option key={b} value={b}>
+                  {b} · {BUILDING_LABELS[b]}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Grade override (whole tab)">
+            <input
+              type="text"
+              value={worksheet.gradeOverride ?? ""}
+              onChange={(e) =>
+                onChange({ ...worksheet, gradeOverride: e.target.value || undefined })
+              }
+              placeholder="e.g. K, 5, 12"
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-mono outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+            />
+          </Field>
+          <Field label="Delivery date override">
+            <input
+              type="text"
+              value={worksheet.deliveryDateOverride ?? ""}
+              onChange={(e) =>
+                onChange({ ...worksheet, deliveryDateOverride: e.target.value || undefined })
+              }
+              placeholder="ISO like 2026-05-20"
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-mono outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+            />
+          </Field>
+        </div>
+        <Field label="Full-name column (alt. to First+Last Name)">
           <input
             type="text"
-            value={item.identifierColumn ?? ""}
+            value={worksheet.columnMapping.fullNameColumn ?? ""}
             onChange={(e) =>
-              onChange({ ...item, identifierColumn: e.target.value || undefined })
+              onChange({
+                ...worksheet,
+                columnMapping: {
+                  ...worksheet.columnMapping,
+                  fullNameColumn: e.target.value || undefined,
+                },
+              })
             }
-            placeholder="Optional · e.g. Sub Numbers"
-            className={cn(
-              "flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-mono outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10",
-              !hasIdentifier && "text-slate-400",
-            )}
+            placeholder="e.g. Name — splits on last space"
+            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-mono outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
           />
-        </div>
+        </Field>
+        <p className="text-[11px] text-slate-500 leading-relaxed">
+          Most fundraisers don't need these.
+          <br />
+          <span className="font-semibold">Header rows to combine</span>: set to 2 if your sheet uses
+          two header rows (product on top, date below).
+          <br />
+          <span className="font-semibold">Grade override</span> / <span className="font-semibold">Building override</span>:
+          use when the whole tab is one grade or one building (the Pizza sheet's per-grade tabs
+          work this way).
+          <br />
+          <span className="font-semibold">Delivery date override</span>: use when the whole tab IS
+          one delivery date (Subway-style).
+          <br />
+          <span className="font-semibold">Full-name column</span>: use when the sheet has one
+          combined Name cell instead of separate first/last columns.
+        </p>
       </div>
-    </div>
+    </details>
   );
 }
 
