@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { DeliveryDatePicker, pickDefaultDeliveryDate } from "@/components/DeliveryDatePicker";
 import { EmptyState } from "@/components/EmptyState";
@@ -11,6 +11,8 @@ import { dataSource } from "@/lib/data/dataSource";
 import { EMPTY_FILTERS, type LookupFilters, type StudentOrder } from "@/lib/data/types";
 import { applyFilters, sortByName } from "@/lib/utils/search";
 
+const POLL_INTERVAL_MS = 20_000;
+
 export default function LookupPage() {
   const params = useParams<{ id: string }>();
   const fundraiserId = params?.id ?? "";
@@ -18,28 +20,59 @@ export default function LookupPage() {
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<LookupFilters>(EMPTY_FILTERS);
   const [defaultedDate, setDefaultedDate] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [pollError, setPollError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    dataSource
-      .listOrders(fundraiserId)
-      .then((data) => {
-        if (!cancelled) {
-          setOrders(data);
-          setLoading(false);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
+  // Used so an in-flight fetch from an earlier fundraiserId can be ignored
+  // if the user navigates between fundraisers.
+  const activeFundraiserRef = useRef(fundraiserId);
+  activeFundraiserRef.current = fundraiserId;
+
+  const fetchOrders = useCallback(
+    async (opts: { initial: boolean }) => {
+      if (!fundraiserId) return;
+      if (opts.initial) setLoading(true);
+      try {
+        const data = await dataSource.listOrders(fundraiserId);
+        if (activeFundraiserRef.current !== fundraiserId) return;
+        setOrders(data);
+        setLastUpdated(new Date());
+        setPollError(null);
+      } catch (err) {
+        if (activeFundraiserRef.current !== fundraiserId) return;
+        if (opts.initial) {
           console.error("Failed to load orders:", err);
-          setLoading(false);
         }
-      });
-    return () => {
-      cancelled = true;
+        setPollError((err as Error).message ?? "Refresh failed");
+      } finally {
+        if (opts.initial) setLoading(false);
+      }
+    },
+    [fundraiserId],
+  );
+
+  // Initial load.
+  useEffect(() => {
+    fetchOrders({ initial: true });
+  }, [fetchOrders]);
+
+  // Background polling. Skip when tab is hidden to save Sheets quota.
+  useEffect(() => {
+    const tick = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      fetchOrders({ initial: false });
     };
-  }, [fundraiserId]);
+    const id = window.setInterval(tick, POLL_INTERVAL_MS);
+    // Also re-fetch immediately when the tab regains focus.
+    const onVisibilityChange = () => {
+      if (!document.hidden) fetchOrders({ initial: false });
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [fetchOrders]);
 
   // Collect all distinct delivery dates from the loaded orders.
   const availableDates = useMemo(() => {
@@ -59,7 +92,6 @@ export default function LookupPage() {
     setDefaultedDate(true);
   }, [availableDates, defaultedDate]);
 
-  // Compute the filtered + date-restricted view of orders.
   const filtered = useMemo(() => {
     const base = sortByName(applyFilters(orders, filters));
     if (!filters.deliveryDate) return base;
@@ -117,10 +149,17 @@ export default function LookupPage() {
           availableItems={availableItems}
         />
         <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
-          <span>
-            {loading
-              ? "Loading…"
-              : `${totals.students} student${totals.students === 1 ? "" : "s"} · ${totals.items} item${totals.items === 1 ? "" : "s"}`}
+          <span className="flex items-center gap-2">
+            <LiveIndicator
+              lastUpdated={lastUpdated}
+              pollError={pollError}
+              loading={loading}
+            />
+            <span>
+              {loading
+                ? "Loading…"
+                : `${totals.students} student${totals.students === 1 ? "" : "s"} · ${totals.items} item${totals.items === 1 ? "" : "s"}`}
+            </span>
           </span>
           {orders.length > 0 && filtered.length !== orders.length && (
             <span>{orders.length - filtered.length} hidden</span>
@@ -159,5 +198,48 @@ export default function LookupPage() {
         </ul>
       )}
     </div>
+  );
+}
+
+function LiveIndicator({
+  lastUpdated,
+  pollError,
+  loading,
+}: {
+  lastUpdated: Date | null;
+  pollError: string | null;
+  loading: boolean;
+}) {
+  // Tick once per second so the "Xs ago" caption stays current.
+  const [, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  if (loading) return null;
+  if (pollError) {
+    return (
+      <span
+        className="inline-flex items-center gap-1.5 text-rose-700"
+        title={`Refresh failed: ${pollError}`}
+      >
+        <span className="w-2 h-2 rounded-full bg-rose-500" />
+        <span className="font-medium">Offline</span>
+      </span>
+    );
+  }
+  if (!lastUpdated) return null;
+  const ageSec = Math.max(0, Math.round((Date.now() - lastUpdated.getTime()) / 1000));
+  const ageLabel = ageSec < 5 ? "just now" : `${ageSec}s ago`;
+  return (
+    <span className="inline-flex items-center gap-1.5 text-emerald-700">
+      <span className="relative flex w-2 h-2">
+        <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 animate-ping" />
+        <span className="relative inline-flex w-2 h-2 rounded-full bg-emerald-500" />
+      </span>
+      <span className="font-medium">Live</span>
+      <span className="text-slate-400 font-normal">· {ageLabel}</span>
+    </span>
   );
 }
